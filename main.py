@@ -2,6 +2,32 @@ from tkinter import *
 from tkinter import messagebox
 import time
 import random
+from tkinter.simpledialog import askstring
+
+import sqlalchemy
+from sqlalchemy import Table, Column, Integer, String
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import Session
+
+# creating a data base for the scores
+engine = sqlalchemy.create_engine("sqlite:///highscore.db", echo=True)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class HighScore(Base):
+    __tablename__ = "highscore"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=False)
+    score = Column(Integer, nullable=False)
+
+
+# Base.metadata.create_all(engine)
+
+# new_score = HighScore(name="Moh", score=5)
+
 
 word_list = ['a', 'ability', 'able', 'about', 'above', 'accept', 'according', 'account', 'across', 'act', 'action',
              'activity', 'actually', 'add', 'address', 'administration', 'admit', 'adult', 'affect', 'after', 'again',
@@ -95,26 +121,34 @@ word_list = ['a', 'ability', 'able', 'about', 'above', 'accept', 'according', 'a
              'while', 'white', 'who', 'whole', 'whom', 'whose', 'why', 'wide', 'wife', 'will', 'win', 'wind', 'window',
              'wish', 'with', 'within', 'without', 'woman', 'wonder', 'word', 'work', 'worker', 'world', 'worry',
              'would', 'write', 'writer', 'wrong', 'yard', 'yeah', 'year', 'yes', 'yet', 'you', 'young', 'your',
+
              'yourself']
-# Tkinter ui
-window = Tk()
-window.title("Moh's type speed calculator")
-window.config(pady=30, padx=30)
+# timers
 start_time = None
 live_caltimer = None
+count_down_timer = None
+refresh = None
+count_down_time = None
+# declared because it's a global variable
+test_words = None
 speed = 0
-canva = Canvas(background="white", width=500, height=300)
 # to track the current word to be typed
 word_track = 0
-
+# track countdown
+counting_down = False
 # to contain typed words
 typed_words_list_correct = []
 typed_words_list_wrong = []
 # to contain each word object
 canva_text_obj_list = []
-# algorithm to place each word
 
-test_words = None
+# Tkinter ui
+
+window = Tk()
+window.title("Moh's type speed calculator")
+window.config(pady=30, padx=30)
+
+canva = Canvas(background="white", width=500, height=300)
 canva.grid(row=1, column=0, columnspan=5, padx=20)
 label = Label(text="type in here", pady=50)
 label.grid(column=0, row=2)
@@ -124,11 +158,13 @@ speed_label = Label(text=f"speed:{speed} cps")
 speed_label.grid(row=3, column=2)
 timer_label = Label()
 timer_label.grid(row=0, column=3)
-counting_down = False
-count_down_timer = None
-refresh = None
+with Session(engine) as session:
+    all_data = session.query(HighScore).all()
+    high_score = all_data[-1].score
+high_score_label = Label(text=f"highcore:{high_score}")
+high_score_label.grid(row=0, column=0)
 
-
+# algorithm to place each word
 def fetch_words():
     global test_words
     # selects random 50 words
@@ -144,27 +180,9 @@ def fetch_words():
         x += (15 * len(i) - (len(i))) / 2
 
 
-def count_down(time):
-    global count_down_timer
-    global counting_down
-    counting_down = True
-    count_down_time = time
-    if count_down_time < 0:
-        wpm = len(typed_words_list_correct) * 2
-        window.after_cancel(refresh)
-        messagebox.showinfo(title="type speed", message=f"type speed:{wpm}")
-        return
-
-    str_count_down = f"{count_down_time}"
-    if count_down_time < 10:
-        str_count_down = f"0{count_down_time}"
-    timer_label.config(text=f"00:{str_count_down}")
-    count_down_time -= 1
-    count_down_timer = window.after(1000, count_down, count_down_time)
-
-
 # calculates the speed automatically
 def cal_speed(inp):
+    global count_down_time
     global refresh
     global counting_down
     global start_time
@@ -179,19 +197,71 @@ def cal_speed(inp):
             if word_track < len(canva_text_obj_list):
                 word_track += 1
             else:
-                wpm = len(typed_words_list_correct) * 2
+                wpm = (len(typed_words_list_correct)/(30 - count_down_time)) * 2
                 window.after_cancel(refresh)
-                messagebox.showinfo(title="type speed", message=f"type speed{wpm}")
+                messagebox.showinfo(title="type speed", message=f"type speed:{wpm} words per minute\n"
+                                                                f"the words typed wrong are not included in the score\n"
+                                                                f"The typed wrong words are\n"
+                                                                + "\n".join(typed_words_list_wrong))
+                with Session(engine) as session:
+                    all_data = session.query(HighScore).all()
+                    if wpm > all_data[-1].score:
+                        name = askstring('New highscore', 'please enter your name?')
+                        if name != "":
+                            new_score = HighScore(name=name,score=wpm)
+                            session.add(new_score)
+                            session.commit()
+                    reset()
 
             typed_words_list_correct.append(inp)
         else:
             text_input.delete(0, END)
             canva.itemconfig(canva_text_obj_list[word_track], fill="red")
+            typed_words_list_wrong.append(test_words[word_track])
             word_track += 1
-            typed_words_list_wrong.append(inp)
     refresh = window.after(50, cal_speed, text_input.get())
 
 
+# count down function
+def count_down(time):
+    global count_down_time
+    global count_down_timer
+    global counting_down
+    counting_down = True
+    count_down_time = time
+    if count_down_time < 0:
+        wpm = len(typed_words_list_correct) * 2
+        window.after_cancel(refresh)
+        messagebox.showinfo(title="type speed", message=f"type speed:{wpm} words per minute\n"
+                                                        f"the words typed wrong are not included in the score\n"
+                                                        f"The typed wrong words are\n"
+                                                        + "\n".join(typed_words_list_wrong)
+                            )
+        with Session(engine) as session:
+            all_data = session.query(HighScore).all()
+            if wpm > all_data[-1].score:
+
+                name = askstring('New highscore', 'please enter your name?')
+                if name != "" :
+                    new_score = HighScore(name=name,score=wpm)
+                    session.add(new_score)
+                    session.commit()
+            reset()
+
+
+
+
+        return
+
+    str_count_down = f"{count_down_time}"
+    if count_down_time < 10:
+        str_count_down = f"0{count_down_time}"
+    timer_label.config(text=f"00:{str_count_down}")
+    count_down_time -= 1
+    count_down_timer = window.after(1000, count_down, count_down_time)
+
+
+# to caalculate the live characters entered per second
 def live_calculator(inp):
     global counting_down
     global start_time
@@ -199,6 +269,7 @@ def live_calculator(inp):
     global live_caltimer
     global word_track
     global test_words
+    # to dectect if a text has been entered
     if inp != "" or len(typed_words_list_correct) > 0 or len(typed_words_list_wrong) > 0:
         if not counting_down:
             count_down(30)
@@ -212,10 +283,8 @@ def live_calculator(inp):
         speed_label.config(text=f"speed:{speed} cps")
     live_caltimer = window.after(500, live_calculator, text_input.get())
 
-    # to dectect if a text has been entered
 
-
-# resets the app
+# resets the app variables
 def reset():
     global typed_words_list_correct
     global typed_words_list_wrong
@@ -245,9 +314,12 @@ def reset():
     for i in canva_text_obj_list:
         canva.delete(i)
     canva_text_obj_list = []
+    with Session(engine) as session:
+        all_data = session.query(HighScore).all()
+        high_score = all_data[-1].score
+    high_score_label.config(text=f"highscore:{high_score}")
+
     fetch_words()
-
-
 
 
 fetch_words()
